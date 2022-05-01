@@ -4,10 +4,11 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const morgan = require('morgan');
 const IPFS = require('ipfs-core');
-const _ = require('lodash');
-const CID = require('multiformats/cid');
 const app = express();
 const toBuffer = require('it-to-buffer');
+const fs = require('fs');
+
+app.use(express.static('static'));
 
 // enable files upload
 app.use(fileUpload({
@@ -22,14 +23,10 @@ app.use(morgan('dev'));
 
 //start app 
 const port = process.env.PORT || 3000;
-let ipfs;
+const ipfs = IPFS.create();
 
 app.post('/storeFile', async (req, res) => {
     try {
-
-        if (ipfs === undefined) {
-            ipfs = await IPFS.create();
-        }
 
         if(!req.files) {
             res.send({
@@ -40,8 +37,7 @@ app.post('/storeFile', async (req, res) => {
         else {
             let file = req.files.file;
             let id = req.query.id;
-            
-            await ipfs.files.mkdir('/' + id)
+            await (await ipfs).files.mkdir('/' + id)
                 .catch(e => {
                     res.send({
                         status: false,
@@ -49,14 +45,12 @@ app.post('/storeFile', async (req, res) => {
                     })
                 });        
 
-            await ipfs.files.write('/' + file.name, file.data).catch(e => console.log(e));     // add file to IPFS
+            await (await ipfs).files.write('/' + file.name, file.data, { create: true });     // add file to IPFS
             
-            await ipfs.files.mv('/' + file.name, '/' + id);     // move file to new folder
+            await (await ipfs).files.mv('/' + file.name, '/' + id);     // move file to new folder
             
-            const result = await ipfs.files.stat('/' + id + '/' + file.name);
+            const result = await (await ipfs).files.stat('/' + id + '/' + file.name);
             
-            ipfs.stop();
-
             //send response
             res.send({
                 status: true,
@@ -76,29 +70,33 @@ app.post('/storeFile', async (req, res) => {
 });
 
 
-app.use('/getFile', async (req, res) => {
+app.get('/getFile', async (req, res) => {
     try {
 
         if (req.query.path !== undefined) {
             
-            if (ipfs === undefined) {
-                ipfs = await IPFS.create();
-            }
-            
             const path = req.query.path;
-            console.log(path);
 
-            const result = await ipfs.files.stat('/' + id + '/' + file.name);
-            console.log(result);
-
-            const bufferedContents = await toBuffer(
-                ipfs.files.read(path)
-            );
+            const fileName = path.split(/[/ ]+/).pop();     //gets the string after last '/'
             
-            ipfs.stop();
-            res.send({
-                content: bufferedContents.toString()
-            });
+            const bufferedContents = await toBuffer(
+                (await ipfs).files.read(path)
+            );
+
+            const filePath = 'static/' + fileName;
+            
+            fs.appendFile(filePath, bufferedContents, function (err) {
+                if (err) throw err;
+            })
+
+            res.download(filePath, fileName, (err) => {
+                if (err) {
+                  res.status(500).send('error');
+                }
+                else {
+                  console.log('file was downloaded')
+                }
+            })
             
         } else {
             res.status(400).send("Query parameter (hash) missing!");
